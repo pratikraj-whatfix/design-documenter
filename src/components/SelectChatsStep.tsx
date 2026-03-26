@@ -5,6 +5,8 @@ import { useState, useEffect } from "react";
 interface Transcript {
   id: string;
   title: string;
+  label: string;
+  summary: string;
   messageCount: number;
   preview: string;
   modifiedAt: string;
@@ -133,10 +135,15 @@ export default function SelectChatsStep({
                   </button>
 
                   <div className="flex-1 min-w-0 cursor-pointer" onClick={() => toggle(t.id)}>
-                    <h3 className="text-sm font-semibold text-slate-800 leading-snug line-clamp-2">
-                      {t.title}
+                    <h3 className="text-sm font-semibold text-slate-800 leading-snug">
+                      {t.label}
                     </h3>
-                    <div className="flex items-center gap-3 mt-1.5 text-xs text-slate-400">
+                    {t.summary && (
+                      <p className="text-xs text-slate-500 mt-1 leading-relaxed line-clamp-2">
+                        {t.summary}
+                      </p>
+                    )}
+                    <div className="flex items-center gap-3 mt-2 text-xs text-slate-400">
                       <span>{formatDate(t.modifiedAt)}</span>
                       <span className="w-1 h-1 rounded-full bg-slate-300" />
                       <span>{t.messageCount} message{t.messageCount !== 1 ? "s" : ""}</span>
