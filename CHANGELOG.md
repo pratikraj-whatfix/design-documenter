@@ -96,6 +96,46 @@ Screenshots of each step are captured in the repository's initial exploration an
 
 ---
 
+## [v0.2.0] -- 2026-03-26
+
+### Summary
+Complete rewrite of document generation quality: synthesized objectives, themed decision grouping, visual hierarchy, and de-emphasized metadata.
+
+### What Changed
+
+#### 1. Objective synthesis replaces raw message dump
+- **Before:** The "Objective" section was the first user message copy-pasted verbatim, often 500+ characters of unedited chat text including file references, role prompts, and iteration noise like "still not working".
+- **After:** Synthesized 1-2 sentence summary extracted from intent-bearing sentences (those containing "build", "create", "design", etc.) with noise like file extensions, `@file` references, role prompts ("You are a backend engineer"), and structured prompt headers (`CONTEXT:`, `OUTPUT:`) automatically stripped.
+- **Why:** The documentation should describe what the user intended, not reproduce the chat verbatim.
+
+#### 2. Themed decision grouping replaces numbered list
+- **Before:** Every paragraph matching a keyword pattern was listed as "Decision 1", "Decision 2", etc. Model narration ("Let me check...", "Good, I can see...") appeared as "decisions."
+- **After:** Decisions are grouped under five themes: Architecture & Structure, UI & Visual Design, Data & API, Technical Approach, and Trade-offs & Rationale. Content is condensed to the first 2-3 sentences per paragraph, with first-person narration patterns stripped. Related items within a theme are de-duplicated.
+- **Why:** A numbered list of raw fragments is unreadable. Themed grouping lets the reader navigate to what matters.
+
+#### 3. Derived titles replace raw message truncation
+- **Before:** Title was the first 80 characters of the first user message, often starting with "We are trying to..." or "Follow the attached prototype...".
+- **After:** Title is extracted from action-oriented phrases ("build a design system", "AI Voiceover job pipeline") with fallback to noun-phrase detection ("History dashboard"). Generic words, file extensions, version numbers, and articles are cleaned.
+- **Why:** The document title should describe the topic, not quote the user.
+
+#### 4. Session metadata moved to bottom with low visual weight
+- **Before:** "Conversation Overview" section near the top showed raw message counts and user message previews in blockquotes. Session IDs, dates, and token counts were given equal visual weight as design content.
+- **After:** A single `<sub>` line at the very bottom after a dashed separator shows date, session count, prompt/response counts, and session IDs in 11px light gray text. No "Key Topics" keyword list.
+- **Why:** Metadata should be available for reference but not compete with the actual design decisions for attention.
+
+#### 5. Improved prose rendering in ReviewStep
+- **Before:** Standard `prose-sm` Tailwind typography with minimal customization. Blockquotes looked like regular text.
+- **After:** H2 headings are uppercase with letter-spacing and bottom borders. H3 headings are slate-gray for visual hierarchy. Blockquotes have indigo background tint, indigo left border, and medium-weight indigo text. Tables, lists, and code have refined spacing. The `<sub>` metadata renders as a visually distinct footer via `rehype-raw` + custom component override.
+- **Why:** The preview should feel like a designed document, not a raw markdown dump.
+
+### Files Modified
+- `src/lib/doc-generator.ts` -- Complete rewrite: new `synthesizeObjective`, `deriveTitle`, `cleanTitle`, `extractSubstantiveContent`, `cleanDecisionContent` functions; themed `THEME_PATTERNS` classification; `mergeRelatedItems` de-duplication; metadata in `<sub>` tags
+- `src/components/ReviewStep.tsx` -- Added `rehype-raw` plugin, custom `sub` component for metadata, expanded prose classes for blockquotes/headings/code
+- `src/app/globals.css` -- Replaced `.prose` overrides with `.doc-preview` scoped styles for h1/h2/h3, blockquotes, lists, and horizontal rules
+- `package.json` -- Added `rehype-raw` dependency
+
+---
+
 <!-- TEMPLATE FOR FUTURE VERSIONS
 
 ## [vX.Y.Z] -- YYYY-MM-DD

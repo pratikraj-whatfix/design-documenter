@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
 
 interface ReviewStepProps {
   selectedIds: string[];
@@ -114,8 +115,18 @@ export default function ReviewStep({
 
       <div className="rounded-xl border border-slate-200 bg-white overflow-hidden mb-8">
         {mode === "preview" ? (
-          <div className="p-6 prose prose-slate prose-sm max-w-none prose-headings:text-slate-800 prose-p:text-slate-600 prose-li:text-slate-600 prose-blockquote:text-slate-500 prose-blockquote:border-indigo-300 prose-code:text-indigo-600 prose-code:bg-indigo-50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          <div className="doc-preview p-8 prose prose-slate max-w-none prose-headings:text-slate-800 prose-h1:text-2xl prose-h1:font-bold prose-h1:mb-3 prose-h2:text-lg prose-h2:font-semibold prose-h2:mt-8 prose-h2:mb-3 prose-h2:text-indigo-900 prose-h3:text-base prose-h3:font-semibold prose-h3:mt-5 prose-h3:mb-2 prose-p:text-slate-600 prose-p:leading-relaxed prose-li:text-slate-600 prose-li:leading-relaxed prose-blockquote:text-indigo-700 prose-blockquote:bg-indigo-50/50 prose-blockquote:border-indigo-400 prose-blockquote:rounded-r-lg prose-blockquote:py-3 prose-blockquote:px-5 prose-blockquote:not-italic prose-blockquote:font-medium prose-code:text-indigo-600 prose-code:bg-indigo-50 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:before:content-none prose-code:after:content-none prose-hr:border-slate-200 prose-hr:my-6 prose-strong:text-slate-800">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              rehypePlugins={[rehypeRaw]}
+              components={{
+                sub: ({ children }) => (
+                  <div className="mt-8 pt-4 border-t border-dashed border-slate-200 text-[11px] text-slate-400 leading-relaxed font-normal not-prose">
+                    {children}
+                  </div>
+                ),
+              }}
+            >
               {markdown}
             </ReactMarkdown>
           </div>
