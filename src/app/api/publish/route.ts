@@ -3,7 +3,7 @@ import { loadConfig, parseConfluenceUrl } from "@/lib/config";
 import { publishToPage } from "@/lib/confluence";
 
 export async function POST(request: Request) {
-  const { markdown, mode } = await request.json();
+  const { markdown, mode, insertAfterId, generateToc } = await request.json();
 
   if (!markdown) {
     return NextResponse.json({ error: "No content to publish" }, { status: 400 });
@@ -38,7 +38,9 @@ export async function POST(request: Request) {
     },
     parsed.pageId,
     markdown,
-    mode || "append"
+    mode || "append",
+    insertAfterId,
+    generateToc ?? true
   );
 
   if (!result.ok) {

@@ -1,52 +1,37 @@
 import { TranscriptMessage } from "./transcripts";
 
+interface SectionInput {
+  id: string;
+  title: string;
+  placeholders: string[];
+}
+
 interface GeneratedDoc {
   title: string;
   markdown: string;
 }
-
-// ── Noise filtering ──────────────────────────────────────────────────
 
 const NOISE_STARTS = [
   "let me ", "now let me ", "good,", "good.", "i can see",
   "i'll ", "i will ", "looking at", "checking ", "let me check",
   "setting up", "now i need", "i need to", "i'm going to",
   "i'm thinking", "i'm organizing", "i'm redesigning", "i'm seeing",
-  "i see ", "i see,", "i see --",
-  "ok,", "ok.", "okay,", "alright,", "sure,", "sure.",
+  "i see ", "i see,", "ok,", "ok.", "okay,", "alright,", "sure,", "sure.",
   "here's what", "here is what", "the file", "this file",
   "the output", "command completed", "exit code",
-  "i also want", "i should", "time to",
   "now i'll ", "now update", "now let", "actually let",
-  "continuing through", "moving into", "for the form",
   "deployed successfully", "the error at",
-  "the dashboard is now", "the package info",
 ];
 
 function isNoise(text: string): boolean {
   const lower = text.toLowerCase().trim();
-  if (lower.length < 40) return true;
+  if (lower.length < 35) return true;
   if (NOISE_STARTS.some((n) => lower.startsWith(n))) return true;
   if (/^\[?(tool|thinking|setting|install|running|reading)\b/i.test(lower)) return true;
   if (/^(created|updated|wrote|deleted|moved|copied|installed)\b/i.test(lower)) return true;
   if (/^```/.test(lower)) return true;
-  // Filter deployment/command narration
-  if (/\b(now copy|now deploy|now update the|let me verify|vercel|npm run|git push)\b/i.test(lower) && lower.length < 150) return true;
+  if (/\b(npm run|git push|vercel|now copy|now deploy)\b/i.test(lower) && lower.length < 150) return true;
   return false;
-}
-
-function cleanDecisionContent(text: string): string {
-  return text
-    // Strip first-person narration patterns
-    .replace(/^(For this,?\s*)?I('m| am| need to| should| want to| see|'ll)\s+[^.]*?\.\s*/i, "")
-    .replace(/\bI('m| am| need to| should)\b[^.]*?\.\s*/g, "")
-    // Strip orphaned bold markers at the start
-    .replace(/^\*\*[^*]*\*\*\s*[-—]\s*/, "")
-    .replace(/^[-*]\s*\*\*/, "**")
-    // Strip command/deployment lines
-    .replace(/^[-*]\s*Now (?:copy|update|deploy|build)[^\n]*\n?/gm, "")
-    .replace(/^[-*]\s*The (?:error|package info|warning)[^\n]*\n?/gm, "")
-    .trim();
 }
 
 function cleanText(text: string): string {
@@ -56,121 +41,410 @@ function cleanText(text: string): string {
     .replace(/```[\s\S]*?```/g, "")
     .replace(/\[Tool (?:call|result)\][^\n]*/g, "")
     .replace(/\[Thinking\][^\n]*/g, "")
-    // Remove file references (leftover from @file paths, media files)
     .replace(/[^\s]*\.(mp4|png|jpg|jpeg|gif|svg|pdf|xlsx?|csv|json|wav|mp3)\b/gi, "")
-    // Remove "PoC Trial (N)" and similar artifact fragments
-    .replace(/\b(PoC|POC)\s+\w+\s*(\(\d+\))?\s*/g, "")
-    // Remove structured prompt headers
-    .replace(/^(CONTEXT|OUTPUT EXPECTED|EXAMPLE|CONSTRAINTS|PRACTICALS|NOTE|FILES TO GENERATE)[:\s]*$/gim, "")
-    // Remove role prompts anywhere
+    .replace(/^(CONTEXT|OUTPUT EXPECTED|EXAMPLE|CONSTRAINTS|NOTE|FILES TO GENERATE)[:\s]*$/gim, "")
     .replace(/You are (?:a|an) [^.]*?\.\s*/gi, "")
-    // Remove follow-the-reference preambles anywhere
     .replace(/Follow the (?:attached|given|above)[^.]*?\.\s*/gi, "")
-    // Remove "build the exact same thing" preambles
     .replace(/(?:help )?build the exact same[^.]*?\.\s*/gi, "")
-    // Remove URLs entirely from objective/title source (keep original in decision content)
     .replace(/https?:\/\/\S+/g, "")
-    // Remove partial URL fragments and domain names
     .replace(/\b\w+\.\w+\.(?:com|net|org|io|app|dev)\b[^\s]*/g, "")
-    // Remove backtick-wrapped code references
     .replace(/`[^`]*`/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
-// ── Objective synthesis ──────────────────────────────────────────────
+function cleanDecision(text: string): string {
+  return text
+    .replace(/^(For this,?\s*)?I('m| am| need to| should| want to| see|'ll)\s+[^.]*?\.\s*/i, "")
+    .replace(/\bI('m| am| need to| should)\b[^.]*?\.\s*/g, "")
+    .replace(/^\*\*[^*]*\*\*\s*[-—]\s*/, "")
+    .replace(/^[-*]\s*\*\*/, "**")
+    .replace(/^[-*]\s*Now (?:copy|update|deploy|build)[^\n]*\n?/gm, "")
+    .replace(/^[-*]\s*The (?:error|package info|warning)[^\n]*\n?/gm, "")
+    .trim();
+}
 
-function synthesizeObjective(userMessages: string[]): string {
-  if (userMessages.length === 0) return "";
+function condense(para: string): string {
+  const sentences = para.split(/(?<=[.!?])\s+/);
+  return sentences
+    .filter((s) => s.trim().length > 15 && !isNoise(s))
+    .slice(0, 3)
+    .join(" ")
+    .trim();
+}
 
-  const primary = userMessages[0];
-
-  const sentences = primary
-    .split(/[.!?\n]+/)
-    .map((s) => s.replace(/\[link\]\([^)]*\)/g, "").trim())
-    .filter((s) => {
-      if (s.length < 15 || s.length > 250) return false;
-      const skip = [
-        /^(Here is|http|Follow the|You are|CONTEXT|OUTPUT|EXAMPLE|CONSTRAINTS|NOTE|FILES)/i,
-        /^\s*[-*]\s/,
-        /^\w+\.\w{2,4}$/,
-        /^\d+\.\s/,
-        /^(Use|Keep|Provide|Include|Implement|Return|Limit|Save|Call|Expose)\s/i,
-        /^(accept|persist|optionally|apply)\s/i,
-        /below prompt|attached prototype|exact same thing/i,
-        /^(PoC|POC|Trial)\b/i,
-        /\b\w+\.js\b|\b\w+\.ts\b|\b\w+\.py\b/,  // file references
-        /^\w+\s*[-—]+\s/,  // looks like a list/spec line
-        /`[^`]+`/,  // contains inline code
-      ];
-      return !skip.some((r) => r.test(s));
+function dedup(items: string[]): string[] {
+  if (items.length <= 2) return items;
+  const sorted = items.sort((a, b) => b.length - a.length);
+  const result: string[] = [];
+  for (const item of sorted) {
+    const wordsItem = new Set(item.toLowerCase().split(/\s+/).filter((w) => w.length > 3));
+    const isDup = result.some((existing) => {
+      const wordsEx = new Set(existing.toLowerCase().split(/\s+/).filter((w) => w.length > 3));
+      let overlap = 0;
+      for (const w of wordsItem) if (wordsEx.has(w)) overlap++;
+      return overlap > wordsItem.size * 0.5;
     });
-
-  // Prefer sentences that describe what's being built
-  const intentSentences = sentences.filter((s) =>
-    /\b(build|create|design|implement|need|want|goal|purpose|develop|establish|trying|intention)\b/i.test(s)
-  );
-
-  const best = intentSentences.length > 0 ? intentSentences : sentences;
-  let objective = best.slice(0, 2).join(". ");
-  if (objective && !objective.endsWith(".")) objective += ".";
-
-  if (objective.length > 280) {
-    const cutoff = objective.lastIndexOf(".", 280);
-    objective = cutoff > 100 ? objective.slice(0, cutoff + 1) : objective.slice(0, 280) + "...";
+    if (!isDup) result.push(item);
   }
-
-  return objective;
+  return result;
 }
 
-// ── Title derivation ─────────────────────────────────────────────────
+// ── Section-specific extraction ─────────────────────────────────────
 
-function cleanTitle(raw: string): string {
-  let t = raw
-    .replace(/^(a|an|the)\s+/i, "")
-    .replace(/["""''`\u201C\u201D\u2018\u2019]/g, "")
-    .replace(/\s*\([^)]*\)\s*/g, " ")
-    .replace(/\s{2,}/g, " ")
-    .replace(/\s+including\b.*$/i, "")
-    .replace(/\s+following\b.*$/i, "")
-    .replace(/^(language|entire|full|complete|exploring)\s+(for\s+)?/i, "")
-    .replace(/\.\s*$/, "")
-    .trim();
+function extractOverview(
+  userMsgs: string[],
+  _assistantMsgs: string[]
+): string {
+  let md = "";
 
-  // If title is a single generic word + colon + rest, drop the word before colon
-  if (/^\w+:\s/.test(t)) {
-    const afterColon = t.replace(/^\w+:\s*/, "").trim();
-    if (afterColon.length >= 5) t = afterColon;
+  // Objective
+  const objective = synthesizeFromMessages(userMsgs, [
+    /\b(build|create|design|implement|need|want|goal|purpose|develop|establish|trying|intention)\b/i,
+  ]);
+  if (objective) {
+    md += `**Objective:** ${objective}\n\n`;
   }
 
-  return t;
+  // Background
+  const background = synthesizeFromMessages(userMsgs, [
+    /\b(because|currently|existing|today|right now|at present|problem|issue|gap|feedback|data|drop|competitive)\b/i,
+  ]);
+  if (background) {
+    md += `**Background:** ${background}\n\n`;
+  }
+
+  // User Problem
+  const problemSentences = extractSentences(userMsgs, [
+    /\b(user|pain point|frustrat|difficult|confus|struggle|can't|cannot|unable|but currently|however)\b/i,
+  ]);
+  if (problemSentences.length > 0) {
+    md += `**User Problem:** ${problemSentences.slice(0, 2).join(" ")}\n\n`;
+  }
+
+  if (!md) {
+    md += `*Content for this section will be informed by the conversation context.*\n\n`;
+  }
+
+  return md;
 }
 
-function deriveTitle(userMessages: string[]): string {
-  if (userMessages.length === 0) return "Design Documentation";
+function extractResearch(
+  userMsgs: string[],
+  assistantMsgs: string[]
+): string {
+  let md = "";
+  const allMsgs = [...userMsgs, ...assistantMsgs];
 
-  const first = userMessages[0]
-    .replace(/\[link\]\([^)]*\)/g, "")
-    .replace(/@[^\s]+/g, "")
-    .trim();
+  const research = extractSentences(allMsgs, [
+    /\b(research|interview|survey|user study|usability test|finding|insight|discovered)\b/i,
+  ]);
+  if (research.length > 0) {
+    md += `**User Research:**\n`;
+    for (const r of research.slice(0, 4)) md += `- ${r}\n`;
+    md += "\n";
+  }
 
-  // Try to extract an action-oriented phrase
+  const competitive = extractSentences(allMsgs, [
+    /\b(competitor|competitive|benchmark|compared to|alternative|similar product|market)\b/i,
+  ]);
+  if (competitive.length > 0) {
+    md += `**Competitive Analysis:**\n`;
+    for (const c of competitive.slice(0, 4)) md += `- ${c}\n`;
+    md += "\n";
+  }
+
+  const data = extractSentences(allMsgs, [
+    /\b(metric|analytics|conversion|bounce rate|engagement|retention|mixpanel|amplitude|google analytics|data shows|data point)\b/i,
+  ]);
+  if (data.length > 0) {
+    md += `**Data Insights:**\n`;
+    for (const d of data.slice(0, 4)) md += `- ${d}\n`;
+    md += "\n";
+  }
+
+  if (!md) {
+    md += `*No explicit research references were found in the conversation. Consider adding links to interview notes, competitive analysis, or analytics data.*\n\n`;
+  }
+
+  return md;
+}
+
+function extractUserFlow(
+  userMsgs: string[],
+  assistantMsgs: string[]
+): string {
+  let md = "";
+  const allMsgs = [...userMsgs, ...assistantMsgs];
+
+  const persona = extractSentences(allMsgs, [
+    /\b(persona|user type|target user|audience|end user|customer segment|demographic)\b/i,
+  ]);
+  if (persona.length > 0) {
+    md += `**User Persona:** ${persona[0]}\n\n`;
+  }
+
+  const flow = extractSentences(allMsgs, [
+    /\b(step|flow|journey|process|navigate|click|tap|screen|page|then|next|after|before|first|finally|redirect)\b/i,
+  ]);
+  if (flow.length > 0) {
+    md += `**Happy Path:**\n`;
+    for (const f of flow.slice(0, 6)) md += `- ${f}\n`;
+    md += "\n";
+  }
+
+  const edgeCases = extractSentences(allMsgs, [
+    /\b(edge case|error|empty|offline|fallback|loading|timeout|no result|invalid|missing|fail|boundary)\b/i,
+  ]);
+  if (edgeCases.length > 0) {
+    md += `**Edge Cases:**\n`;
+    for (const e of edgeCases.slice(0, 5)) md += `- ${e}\n`;
+    md += "\n";
+  }
+
+  md += `**Flow Diagram:**\n`;
+  md += `> *[Embed a flow diagram from LucidChart, FigJam, or Mermaid here]*\n\n`;
+
+  return md;
+}
+
+function extractIterations(
+  _userMsgs: string[],
+  assistantMsgs: string[]
+): string {
+  let md = "";
+
+  const iterations = extractDecisionEvolution(assistantMsgs);
+
+  if (iterations.length === 0) {
+    md += `*No clear iteration history detected. Document design iterations manually as the project evolves.*\n\n`;
+    return md;
+  }
+
+  for (let i = 0; i < iterations.length; i++) {
+    const iter = iterations[i];
+    md += `### Iteration ${i + 1}: ${iter.label}\n\n`;
+
+    if (iter.approach) {
+      md += `**Approach:** ${iter.approach}\n\n`;
+    }
+
+    if (iter.decisions.length > 0) {
+      md += `**Design Decisions:**\n`;
+      for (const d of iter.decisions) md += `- ${d}\n`;
+      md += "\n";
+    }
+
+    if (iter.feedback) {
+      md += `**Feedback / Change:** ${iter.feedback}\n\n`;
+    }
+  }
+
+  return md;
+}
+
+function extractFinalDesign(
+  userMsgs: string[],
+  assistantMsgs: string[]
+): string {
+  let md = "";
+  const allMsgs = [...userMsgs, ...assistantMsgs];
+
+  md += `**High-Fidelity Mocks:**\n`;
+  md += `> *[Embed Figma / Adobe XD live preview here]*\n\n`;
+
+  md += `**Interactive Prototype:**\n`;
+  md += `> *[Link to clickable prototype]*\n\n`;
+
+  const components = extractSentences(allMsgs, [
+    /\b(component|widget|element|design system|reusable|shared|library|kit|token|variable)\b/i,
+  ]);
+  if (components.length > 0) {
+    md += `**Key UI Components:**\n`;
+    for (const c of components.slice(0, 6)) md += `- ${c}\n`;
+    md += "\n";
+  } else {
+    md += `**Key UI Components:**\n`;
+    md += `*List any new components added to the Design System.*\n\n`;
+  }
+
+  return md;
+}
+
+function extractAppendix(
+  userMsgs: string[],
+  assistantMsgs: string[]
+): string {
+  let md = "";
+
+  const allRaw = [...userMsgs, ...assistantMsgs].join("\n");
+
+  // Extract any URLs from raw content
+  const urls = allRaw.match(/https?:\/\/\S+/g) || [];
+  const uniqueUrls = [...new Set(urls)]
+    .filter((u) => !u.includes("localhost") && u.length < 200)
+    .slice(0, 10);
+
+  if (uniqueUrls.length > 0) {
+    md += `**Referenced Links:**\n`;
+    for (const u of uniqueUrls) md += `- ${u}\n`;
+    md += "\n";
+  }
+
+  md += `**Additional Resources:**\n`;
+  md += `- [Link to Jira Ticket]\n`;
+  md += `- [Link to Figma]\n`;
+  md += `- [Link to Confluence Space]\n\n`;
+
+  return md;
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
+function synthesizeFromMessages(
+  messages: string[],
+  patterns: RegExp[]
+): string {
+  const candidates: string[] = [];
+
+  for (const msg of messages) {
+    const sentences = msg
+      .split(/[.!?\n]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 15 && s.length < 300);
+
+    for (const s of sentences) {
+      if (patterns.some((p) => p.test(s))) {
+        const cleaned = s
+          .replace(/^\s*[-*]\s+/, "")
+          .replace(/^(I want to |I need to |We want to |We need to )/i, "")
+          .trim();
+        if (cleaned.length > 15 && !isNoise(cleaned)) {
+          candidates.push(cleaned);
+        }
+      }
+    }
+  }
+
+  const unique = dedup(candidates);
+  let result = unique.slice(0, 2).join(". ");
+  if (result && !result.endsWith(".")) result += ".";
+  if (result.length > 350) {
+    const cut = result.lastIndexOf(".", 350);
+    result = cut > 50 ? result.slice(0, cut + 1) : result.slice(0, 350) + "...";
+  }
+  return result;
+}
+
+function extractSentences(
+  messages: string[],
+  patterns: RegExp[]
+): string[] {
+  const results: string[] = [];
+  for (const msg of messages) {
+    const sentences = msg
+      .split(/[.!?\n]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 20 && s.length < 400);
+
+    for (const s of sentences) {
+      if (patterns.some((p) => p.test(s)) && !isNoise(s)) {
+        const cleaned = cleanDecision(s.replace(/^\s*[-*]\s+/, ""));
+        if (cleaned.length > 20) {
+          results.push(cleaned.endsWith(".") ? cleaned : cleaned + ".");
+        }
+      }
+    }
+  }
+  return dedup(results);
+}
+
+interface DesignIteration {
+  label: string;
+  approach: string;
+  decisions: string[];
+  feedback: string;
+}
+
+function extractDecisionEvolution(assistantMsgs: string[]): DesignIteration[] {
+  const iterations: DesignIteration[] = [];
+
+  const decisionPatterns = [
+    /\b(chose|decided|opted|went with|selected|picked|using|switched to|moved to)\b/i,
+    /\b(instead of|rather than|over|versus|vs)\b/i,
+    /\b(because|since|reason|rationale|trade-?off|advantage|benefit)\b/i,
+  ];
+
+  const feedbackPatterns = [
+    /\b(changed|revised|updated|refactored|pivoted|reconsidered|moved away|didn't work|wasn't working)\b/i,
+    /\b(feedback|issue|problem|limitation|concern|blocker)\b/i,
+  ];
+
+  const allDecisions: string[] = [];
+  const allFeedback: string[] = [];
+
+  for (const msg of assistantMsgs) {
+    const paragraphs = msg
+      .split(/\n{2,}/)
+      .map((p) => p.trim())
+      .filter((p) => p.length > 50 && p.length < 1500 && !isNoise(p));
+
+    for (const para of paragraphs) {
+      const isDecision = decisionPatterns.some((p) => p.test(para));
+      const isFeedback = feedbackPatterns.some((p) => p.test(para));
+
+      if (isDecision) {
+        const condensed = cleanDecision(condense(para));
+        if (condensed.length > 30) allDecisions.push(condensed);
+      }
+      if (isFeedback) {
+        const condensed = cleanDecision(condense(para));
+        if (condensed.length > 30) allFeedback.push(condensed);
+      }
+    }
+  }
+
+  const uniqueDecisions = dedup(allDecisions);
+  const uniqueFeedback = dedup(allFeedback);
+
+  if (uniqueDecisions.length === 0 && uniqueFeedback.length === 0) {
+    return [];
+  }
+
+  // Group decisions into iteration chunks
+  const chunkSize = Math.max(2, Math.ceil(uniqueDecisions.length / 3));
+  const chunks: string[][] = [];
+  for (let i = 0; i < uniqueDecisions.length; i += chunkSize) {
+    chunks.push(uniqueDecisions.slice(i, i + chunkSize));
+  }
+
+  const labels = [
+    "Initial Concept",
+    "Refined Direction",
+    "Final Approach",
+  ];
+
+  for (let i = 0; i < Math.min(chunks.length, 3); i++) {
+    iterations.push({
+      label: labels[i] || `Direction ${i + 1}`,
+      approach: chunks[i][0] || "",
+      decisions: chunks[i].slice(1, 5),
+      feedback: i < uniqueFeedback.length ? uniqueFeedback[i] : "",
+    });
+  }
+
+  return iterations;
+}
+
+function deriveTitle(userMsgs: string[]): string {
+  if (userMsgs.length === 0) return "Design Documentation";
+
+  const first = userMsgs[0];
+
   const topicPatterns = [
     /(?:build|create|design|implement|develop|set up|establish|revamp|redesign)\s+(?:a\s+|an\s+|the\s+)?(.{5,50}?)(?:\s+(?:where|which|from|with|for|so|as|using|following)\b|[.,\n]|$)/i,
     /(?:working on|exploring|trying to|need to|want to)\s+(.{5,50}?)(?:\s+(?:where|which|from|with|for|so|as)\b|[.,\n]|$)/i,
     /(?:refactor|migrate|update|upgrade|improve|optimize|audit)\s+(?:the\s+|our\s+)?(.{5,50}?)(?:\s+(?:where|which|from|with|for|so|as)\b|[.,\n]|$)/i,
-  ];
-
-  const GENERIC_TITLES = [
-    "exact same thing", "same thing", "something", "the thing",
-    "this", "it", "that", "everything",
-  ];
-
-  const BAD_TITLE_PATTERNS = [
-    /^(js|ts|py|css|html)\b/i,
-    /^\w{1,3}\s*\(/,        // "Js (>=18)"
-    /^(reuse|use|copy) the/i,
-    /^\d/,
   ];
 
   for (const pat of topicPatterns) {
@@ -179,273 +453,70 @@ function deriveTitle(userMessages: string[]): string {
       let title = match[1].replace(/\s+/g, " ").trim();
       title = title.replace(/\s+(a|an|the|of|to|in|on|at|by)$/i, "");
       if (title.length > 50) title = title.slice(0, 50).replace(/\s+\S*$/, "");
-      const wordCount = title.split(/\s+/).filter((w) => w.length > 1).length;
-      if (
-        title.length >= 5 &&
-        wordCount >= 2 &&
-        !GENERIC_TITLES.includes(title.toLowerCase()) &&
-        !BAD_TITLE_PATTERNS.some((p) => p.test(title))
-      ) {
-        const ct = cleanTitle(title);
-        if (ct.length >= 5) return ct.charAt(0).toUpperCase() + ct.slice(1);
+      if (title.split(/\s+/).filter((w) => w.length > 1).length >= 2 && title.length >= 5) {
+        const cleaned = title
+          .replace(/^(a|an|the)\s+/i, "")
+          .replace(/["""''`]/g, "")
+          .replace(/\s*\([^)]*\)\s*/g, " ")
+          .replace(/\s{2,}/g, " ")
+          .trim();
+        if (cleaned.length >= 5) return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
       }
     }
   }
 
-  // Fallback: look for a key noun phrase in ANY sentence
-  const allSentences = first
-    .split(/[.!?\n]+/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 10 && s.length < 200);
-
-  for (const sentence of allSentences) {
-    // Look for "X pipeline/system/platform/dashboard/tool/app"
-    const nounMatch = sentence.match(
-      /\b(\w+(?:\s+\w+){0,3}\s+(?:pipeline|system|platform|dashboard|tool|app|service|module|feature|project|revamp|redesign|audit))\b/i
-    );
-    if (nounMatch) {
-      let t = nounMatch[1].trim();
-      if (t.length >= 5 && t.split(/\s+/).length >= 2) {
-        const ct = cleanTitle(t);
-        if (ct.length >= 5) return ct.charAt(0).toUpperCase() + ct.slice(1);
-      }
-    }
-  }
-
-  // Final fallback: first clause, cleaned up
   const fragment = first.split(/[.,!?\n]/)[0]?.trim() || "Design Documentation";
   const cleaned = fragment
     .replace(/^(we are |I am |I want to |Firstly,?\s*)/i, "")
-    .replace(/^(create|build|design|implement)\s+(a|an|the)\s+/i, "")
+    .replace(/^(create|build|design)\s+(a|an|the)\s+/i, "")
     .trim();
-  const capped = cleaned.length > 50 ? cleaned.slice(0, 50).replace(/\s+\S*$/, "") + "..." : cleaned;
-  const ct = cleanTitle(capped);
-  return (ct.length >= 3 ? ct : "Design Documentation").charAt(0).toUpperCase() +
-    (ct.length >= 3 ? ct : "Design Documentation").slice(1);
+  const capped = cleaned.length > 50 ? cleaned.slice(0, 50).replace(/\s+\S*$/, "") : cleaned;
+  return capped.length >= 3 ? capped.charAt(0).toUpperCase() + capped.slice(1) : "Design Documentation";
 }
 
-// ── Decision & insight extraction ────────────────────────────────────
+// ── Section-to-generator mapping ────────────────────────────────────
 
-interface ThemeGroup {
-  theme: string;
-  icon: string;
-  items: string[];
-}
+const SECTION_GENERATORS: Record<
+  string,
+  (userMsgs: string[], assistantMsgs: string[]) => string
+> = {
+  overview: extractOverview,
+  research: extractResearch,
+  userflow: extractUserFlow,
+  iterations: extractIterations,
+  final: extractFinalDesign,
+  appendix: extractAppendix,
+};
 
-const THEME_PATTERNS: { theme: string; icon: string; patterns: RegExp[] }[] = [
-  {
-    theme: "Architecture & Structure",
-    icon: "**[Architecture]**",
-    patterns: [
-      /\b(architect|structure|pattern|module|layer|separation|monolith|micro|folder structure)\b/i,
-      /\b(app router|page router|server component|client component)\b/i,
-    ],
-  },
-  {
-    theme: "UI & Visual Design",
-    icon: "**[UI/UX]**",
-    patterns: [
-      /\b(ui|ux|visual|layout|design system|styling|css|tailwind|color|typography|spacing|responsive)\b/i,
-      /\b(component|button|card|modal|form|input|navigation|header|footer|sidebar)\b/i,
-    ],
-  },
-  {
-    theme: "Data & API",
-    icon: "**[Data]**",
-    patterns: [
-      /\b(api|rest|graphql|endpoint|database|schema|model|query|mutation|fetch|request)\b/i,
-      /\b(firebase|firestore|postgres|mongo|redis|supabase)\b/i,
-    ],
-  },
-  {
-    theme: "Technical Approach",
-    icon: "**[Technical]**",
-    patterns: [
-      /\b(approach|strategy|implementation|algorithm|optimization|performance|caching)\b/i,
-      /\b(typescript|javascript|react|next|node|python|deploy|build|test)\b/i,
-    ],
-  },
-  {
-    theme: "Trade-offs & Rationale",
-    icon: "**[Rationale]**",
-    patterns: [
-      /\b(trade-?off|instead of|rather than|chose|decision|rationale|reason|because|opted)\b/i,
-      /\b(advantage|disadvantage|pro|con|limitation|constraint)\b/i,
-    ],
-  },
-];
+const SECTION_TITLES: Record<string, string> = {
+  overview: "Project Overview",
+  research: "Research & Discovery",
+  userflow: "User Flow & Requirements",
+  iterations: "Design Iterations & Evolution",
+  final: "Final Design & Prototyping",
+  appendix: "Appendix & Resources",
+};
 
-function extractSubstantiveContent(
-  messages: TranscriptMessage[]
-): { decisions: ThemeGroup[]; outcomes: string[] } {
-  const themeMap = new Map<string, Set<string>>();
-  const outcomes: string[] = [];
-
-  for (const msg of messages) {
-    if (msg.role !== "assistant") continue;
-
-    const paragraphs = msg.content
-      .split(/\n{2,}/)
-      .map((p) => p.trim())
-      .filter((p) => !isNoise(p) && p.length > 60 && p.length < 1500);
-
-    for (const para of paragraphs) {
-      // Check if this paragraph describes an outcome
-      if (
-        /\b(created|built|generated|deployed|published|completed|implemented|configured|set up)\b/i.test(para) &&
-        para.length < 300 &&
-        !isNoise(para)
-      ) {
-        const cleaned = para.replace(/\*\*/g, "").trim();
-        // Skip noise-like outcomes
-        if (
-          cleaned.length > 30 &&
-          !/\b(error at the end|package info|version.?check|warning)\b/i.test(cleaned)
-        ) {
-          // Take only the first sentence of the outcome
-          const firstSentence = cleaned.split(/[.!?]\s/)[0];
-          if (firstSentence && firstSentence.length > 20) {
-            const cleanOutcome = cleanDecisionContent(firstSentence);
-            if (cleanOutcome.length > 20) {
-              outcomes.push(
-                cleanOutcome.endsWith(".") ? cleanOutcome : cleanOutcome + "."
-              );
-            }
-          }
-        }
-        continue;
-      }
-
-      // Classify into themes
-      let bestTheme: string | null = null;
-      let bestScore = 0;
-
-      for (const t of THEME_PATTERNS) {
-        const score = t.patterns.filter((p) => p.test(para)).length;
-        if (score > bestScore) {
-          bestScore = score;
-          bestTheme = t.theme;
-        }
-      }
-
-      if (bestTheme && bestScore >= 1) {
-        if (!themeMap.has(bestTheme)) themeMap.set(bestTheme, new Set());
-        const condensed = cleanDecisionContent(condenseParagraph(para));
-        if (condensed.length > 30) {
-          themeMap.get(bestTheme)!.add(condensed);
-        }
-      }
-    }
-  }
-
-  const decisions: ThemeGroup[] = [];
-  for (const t of THEME_PATTERNS) {
-    const items = themeMap.get(t.theme);
-    if (items && items.size > 0) {
-      // Merge very similar items and cap at 5 per theme
-      const merged = mergeRelatedItems([...items]);
-      decisions.push({
-        theme: t.theme,
-        icon: t.icon,
-        items: merged.slice(0, 5),
-      });
-    }
-  }
-
-  return {
-    decisions,
-    outcomes: [...new Set(outcomes)].slice(0, 8),
-  };
-}
-
-function condenseParagraph(para: string): string {
-  const sentences = para.split(/(?<=[.!?])\s+/);
-  const meaningful = sentences.filter(
-    (s) => s.trim().length > 15 && !isNoise(s)
-  );
-  return meaningful.slice(0, 3).join(" ").trim();
-}
-
-function mergeRelatedItems(items: string[]): string[] {
-  if (items.length <= 3) return items;
-
-  // Simple deduplication: remove items that are substrings of others
-  const sorted = items.sort((a, b) => b.length - a.length);
-  const result: string[] = [];
-
-  for (const item of sorted) {
-    const isDuplicate = result.some((existing) => {
-      const overlap = longestCommonSubstring(
-        existing.toLowerCase(),
-        item.toLowerCase()
-      );
-      return overlap > item.length * 0.5;
-    });
-    if (!isDuplicate) result.push(item);
-  }
-
-  return result;
-}
-
-function longestCommonSubstring(a: string, b: string): number {
-  // Simplified: check word-level overlap ratio
-  const wordsA = new Set(a.split(/\s+/).filter((w) => w.length > 3));
-  const wordsB = new Set(b.split(/\s+/).filter((w) => w.length > 3));
-  let overlap = 0;
-  for (const w of wordsA) {
-    if (wordsB.has(w)) overlap++;
-  }
-  return overlap;
-}
-
-// ── Context extraction ───────────────────────────────────────────────
-
-function extractContext(userMessages: string[]): string {
-  const contextParts: string[] = [];
-
-  for (const msg of userMessages) {
-    const lower = msg.toLowerCase();
-    // Look for explicit context markers
-    if (
-      lower.includes("context") ||
-      lower.includes("background") ||
-      lower.includes("currently") ||
-      lower.includes("existing") ||
-      lower.includes("our current")
-    ) {
-      const sentences = msg
-        .split(/[.!?\n]+/)
-        .map((s) => s.trim())
-        .filter((s) => s.length > 20 && s.length < 300);
-      for (const s of sentences.slice(0, 3)) {
-        if (
-          /\b(current|existing|today|right now|at present|we have|our)\b/i.test(s)
-        ) {
-          contextParts.push(s);
-        }
-      }
-    }
-  }
-
-  return [...new Set(contextParts)].slice(0, 4).join(". ").trim();
-}
-
-// ── Main generator ───────────────────────────────────────────────────
+// ── Main generator ──────────────────────────────────────────────────
 
 export function generateDocumentation(
-  transcriptMessages: { id: string; messages: TranscriptMessage[] }[]
+  transcript: { id: string; messages: TranscriptMessage[] },
+  enabledSections: SectionInput[],
+  userPrompt: string
 ): GeneratedDoc {
-  const allMessages = transcriptMessages.flatMap((t) => t.messages);
+  const allMessages = transcript.messages;
 
   const userMessages = allMessages
     .filter((m) => m.role === "user")
     .map((m) => cleanText(m.content))
     .filter((t) => t.length > 10);
 
+  const assistantMessages = allMessages
+    .filter((m) => m.role === "assistant")
+    .map((m) => cleanText(m.content))
+    .filter((t) => t.length > 10);
+
   const title = deriveTitle(userMessages);
-  const objective = synthesizeObjective(userMessages);
-  const context = extractContext(userMessages);
-  const { decisions, outcomes } = extractSubstantiveContent(allMessages);
 
   const now = new Date().toLocaleDateString("en-US", {
     year: "numeric",
@@ -455,73 +526,47 @@ export function generateDocumentation(
 
   let md = "";
 
-  // ── Title ──
+  // Table of Contents
   md += `# ${title}\n\n`;
+  md += `> **Design Documentation** | Generated ${now}\n\n`;
 
-  // ── Objective as a blockquote ──
-  if (objective) {
-    md += `> ${objective}\n\n`;
+  if (userPrompt) {
+    md += `> *Documentation focus: ${userPrompt.split("\n").join("; ")}*\n\n`;
   }
 
   md += `---\n\n`;
-
-  // ── Context & Background (only if meaningful context found) ──
-  if (context && context.length > 30) {
-    md += `## Background\n\n`;
-    md += `${context}.\n\n`;
+  md += `## Table of Contents\n\n`;
+  for (let i = 0; i < enabledSections.length; i++) {
+    const sTitle = enabledSections[i].title || SECTION_TITLES[enabledSections[i].id] || "Section";
+    const anchor = sTitle.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    md += `${i + 1}. [${sTitle}](#${anchor})\n`;
   }
+  md += "\n---\n\n";
 
-  // ── Approach & Decisions (grouped by theme) ──
-  if (decisions.length > 0) {
-    md += `## Approach & Key Decisions\n\n`;
+  // Generate each section
+  for (const section of enabledSections) {
+    const sTitle = section.title || SECTION_TITLES[section.id] || "Section";
+    md += `## ${sTitle}\n\n`;
 
-    for (const group of decisions) {
-      md += `### ${group.theme}\n\n`;
-      if (group.items.length === 1) {
-        md += `${group.items[0]}\n\n`;
-      } else {
-        for (const item of group.items) {
-          // If item is short enough, render as bullet; otherwise as paragraph
-          if (item.length < 200) {
-            md += `- ${item}\n`;
-          } else {
-            md += `${item}\n\n`;
-          }
-        }
-        md += "\n";
-      }
+    const generator = SECTION_GENERATORS[section.id];
+    if (generator) {
+      const content = generator(userMessages, assistantMessages);
+      md += content;
+    } else {
+      md += `*Content for this section should be filled in based on the project context.*\n\n`;
     }
+
+    md += `---\n\n`;
   }
 
-  // ── Outcomes (what was actually produced) ──
-  if (outcomes.length > 0) {
-    md += `## Outcomes\n\n`;
-    for (const outcome of outcomes) {
-      md += `- ${outcome}\n`;
-    }
-    md += "\n";
-  }
-
-  // ── Separator before metadata ──
-  md += `---\n\n`;
-
-  // ── Session metadata (visually de-emphasized) ──
-  const totalUserMsgs = allMessages.filter((m) => m.role === "user").length;
-  const totalAssistantMsgs = allMessages.filter((m) => m.role === "assistant").length;
+  // Session metadata
+  const totalUser = allMessages.filter((m) => m.role === "user").length;
+  const totalAssistant = allMessages.filter((m) => m.role === "assistant").length;
 
   md += `<sub>\n\n`;
-  md += `**Session info** | `;
-  md += `Generated ${now} | `;
-  md += `${transcriptMessages.length} session(s) | `;
-  md += `${totalUserMsgs} prompts, ${totalAssistantMsgs} responses`;
-
-  if (transcriptMessages.length > 0) {
-    md += ` | Sessions: `;
-    md += transcriptMessages
-      .map((t) => `\`${t.id.slice(0, 8)}\``)
-      .join(", ");
-  }
-
+  md += `**Session info** | Generated ${now} | `;
+  md += `${totalUser} prompts, ${totalAssistant} responses | `;
+  md += `Session: \`${transcript.id.slice(0, 8)}\``;
   md += `\n\n</sub>\n`;
 
   return { title, markdown: md };

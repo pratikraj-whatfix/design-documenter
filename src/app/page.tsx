@@ -4,25 +4,32 @@ import { useState } from "react";
 import StepIndicator from "@/components/StepIndicator";
 import SetupStep from "@/components/SetupStep";
 import SelectChatsStep from "@/components/SelectChatsStep";
+import TemplateStep from "@/components/TemplateStep";
 import ReviewStep from "@/components/ReviewStep";
 import PublishStep from "@/components/PublishStep";
+import { TemplateSection, DEFAULT_SECTIONS } from "@/lib/template";
 
 export default function Home() {
   const [step, setStep] = useState(0);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [sections, setSections] = useState<TemplateSection[]>(
+    DEFAULT_SECTIONS.map((s) => ({ ...s }))
+  );
+  const [userPrompt, setUserPrompt] = useState("");
   const [markdown, setMarkdown] = useState("");
 
   const reset = () => {
     setStep(0);
-    setSelectedIds([]);
+    setSelectedId(null);
+    setSections(DEFAULT_SECTIONS.map((s) => ({ ...s })));
+    setUserPrompt("");
     setMarkdown("");
   };
 
   return (
     <div className="min-h-screen flex flex-col">
-      {/* Header */}
       <header className="border-b border-slate-100 bg-white/80 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
+        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-indigo-600 flex items-center justify-center">
               <svg
@@ -59,8 +66,7 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="flex-1 max-w-4xl mx-auto px-6 py-10 w-full">
+      <main className="flex-1 max-w-5xl mx-auto px-6 py-10 w-full">
         <StepIndicator currentStep={step} onStepClick={setStep} />
 
         <div className="mt-2">
@@ -68,34 +74,49 @@ export default function Home() {
 
           {step === 1 && (
             <SelectChatsStep
-              selectedIds={selectedIds}
-              onSelectionChange={setSelectedIds}
+              selectedId={selectedId}
+              onSelectionChange={setSelectedId}
               onNext={() => setStep(2)}
               onBack={() => setStep(0)}
             />
           )}
 
           {step === 2 && (
-            <ReviewStep
-              selectedIds={selectedIds}
-              markdown={markdown}
-              onMarkdownChange={setMarkdown}
-              onNext={() => setStep(3)}
+            <TemplateStep
+              sections={sections}
+              onSectionsChange={setSections}
+              userPrompt={userPrompt}
+              onPromptChange={setUserPrompt}
+              onNext={() => {
+                setMarkdown("");
+                setStep(3);
+              }}
               onBack={() => setStep(1)}
             />
           )}
 
-          {step === 3 && (
+          {step === 3 && selectedId && (
+            <ReviewStep
+              selectedId={selectedId}
+              sections={sections}
+              userPrompt={userPrompt}
+              markdown={markdown}
+              onMarkdownChange={setMarkdown}
+              onNext={() => setStep(4)}
+              onBack={() => setStep(2)}
+            />
+          )}
+
+          {step === 4 && (
             <PublishStep
               markdown={markdown}
-              onBack={() => setStep(2)}
+              onBack={() => setStep(3)}
               onReset={reset}
             />
           )}
         </div>
       </main>
 
-      {/* Footer */}
       <footer className="border-t border-slate-100 py-4">
         <p className="text-center text-xs text-slate-300">
           Design Documenter &mdash; Your credentials stay local and are never shared.

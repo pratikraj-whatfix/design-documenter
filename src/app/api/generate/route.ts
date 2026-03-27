@@ -4,11 +4,18 @@ import { getTranscript } from "@/lib/transcripts";
 import { generateDocumentation } from "@/lib/doc-generator";
 
 export async function POST(request: Request) {
-  const { transcriptIds } = await request.json();
+  const { transcriptId, sections, userPrompt } = await request.json();
 
-  if (!transcriptIds || transcriptIds.length === 0) {
+  if (!transcriptId) {
     return NextResponse.json(
-      { error: "Select at least one chat session" },
+      { error: "Select a chat session" },
+      { status: 400 }
+    );
+  }
+
+  if (!sections || sections.length === 0) {
+    return NextResponse.json(
+      { error: "Enable at least one template section" },
       { status: 400 }
     );
   }
@@ -26,24 +33,19 @@ export async function POST(request: Request) {
     );
   }
 
-  const transcriptData = [];
-  for (const id of transcriptIds) {
-    for (const dir of uniqueDirs) {
-      const transcript = getTranscript(dir, id);
-      if (transcript) {
-        transcriptData.push(transcript);
-        break;
-      }
-    }
+  let transcript = null;
+  for (const dir of uniqueDirs) {
+    transcript = getTranscript(dir, transcriptId);
+    if (transcript) break;
   }
 
-  if (transcriptData.length === 0) {
+  if (!transcript) {
     return NextResponse.json(
-      { error: "Could not read any of the selected transcripts" },
+      { error: "Could not read the selected transcript" },
       { status: 400 }
     );
   }
 
-  const doc = generateDocumentation(transcriptData);
+  const doc = generateDocumentation(transcript, sections, userPrompt || "");
   return NextResponse.json(doc);
 }

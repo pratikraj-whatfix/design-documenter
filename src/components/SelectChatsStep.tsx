@@ -14,14 +14,14 @@ interface Transcript {
 }
 
 interface SelectChatsStepProps {
-  selectedIds: string[];
-  onSelectionChange: (ids: string[]) => void;
+  selectedId: string | null;
+  onSelectionChange: (id: string | null) => void;
   onNext: () => void;
   onBack: () => void;
 }
 
 export default function SelectChatsStep({
-  selectedIds,
+  selectedId,
   onSelectionChange,
   onNext,
   onBack,
@@ -29,7 +29,6 @@ export default function SelectChatsStep({
   const [transcripts, setTranscripts] = useState<Transcript[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/transcripts")
@@ -41,14 +40,6 @@ export default function SelectChatsStep({
       .catch(() => setError("Failed to load chat sessions"))
       .finally(() => setLoading(false));
   }, []);
-
-  const toggle = (id: string) => {
-    if (selectedIds.includes(id)) {
-      onSelectionChange(selectedIds.filter((i) => i !== id));
-    } else {
-      onSelectionChange([...selectedIds, id]);
-    }
-  };
 
   const formatDate = (iso: string) => {
     const d = new Date(iso);
@@ -65,7 +56,7 @@ export default function SelectChatsStep({
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-3">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600" />
-        <p className="text-sm text-slate-500">Scanning for Cursor conversations</p>
+        <p className="text-sm text-slate-500">Scanning for Cursor conversations...</p>
       </div>
     );
   }
@@ -91,11 +82,10 @@ export default function SelectChatsStep({
     <div className="max-w-2xl mx-auto">
       <div className="text-center mb-8">
         <h2 className="text-2xl font-bold text-slate-800 mb-2">
-          Select Conversations
+          Select a Conversation
         </h2>
-        <p className="text-slate-500">
-          Choose the Cursor chat sessions that contain design decisions you want to document.
-          You can select multiple sessions.
+        <p className="text-slate-500 text-sm">
+          Choose the Cursor chat session that contains the design exploration you want to document.
         </p>
       </div>
 
@@ -104,38 +94,35 @@ export default function SelectChatsStep({
           <p>No conversation transcripts found.</p>
         </div>
       ) : (
-        <div className="space-y-3 mb-8">
+        <div className="space-y-2 mb-8 max-h-[480px] overflow-y-auto pr-1">
           {transcripts.map((t) => {
-            const isSelected = selectedIds.includes(t.id);
-            const isExpanded = expandedId === t.id;
+            const isSelected = selectedId === t.id;
 
             return (
-              <div
+              <button
                 key={t.id}
-                className={`rounded-xl border-2 transition-all duration-200 ${
+                onClick={() => onSelectionChange(isSelected ? null : t.id)}
+                className={`w-full text-left rounded-xl border-2 transition-all duration-200 p-4 ${
                   isSelected
-                    ? "border-indigo-400 bg-indigo-50/50 shadow-sm"
-                    : "border-slate-100 bg-white hover:border-slate-200"
+                    ? "border-indigo-400 bg-indigo-50/60 shadow-sm"
+                    : "border-slate-100 bg-white hover:border-slate-200 hover:bg-slate-50/50"
                 }`}
               >
-                <div className="flex items-start gap-3 p-4">
-                  <button
-                    onClick={() => toggle(t.id)}
-                    className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
+                <div className="flex items-start gap-3">
+                  <div
+                    className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
                       isSelected
                         ? "bg-indigo-600 border-indigo-600"
-                        : "border-slate-300 hover:border-indigo-400"
+                        : "border-slate-300"
                     }`}
                   >
                     {isSelected && (
-                      <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                      </svg>
+                      <div className="w-2 h-2 rounded-full bg-white" />
                     )}
-                  </button>
+                  </div>
 
-                  <div className="flex-1 min-w-0 cursor-pointer" onClick={() => toggle(t.id)}>
-                    <h3 className="text-sm font-semibold text-slate-800 leading-snug">
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-sm font-semibold text-slate-800 leading-snug truncate">
                       {t.label}
                     </h3>
                     {t.summary && (
@@ -143,39 +130,16 @@ export default function SelectChatsStep({
                         {t.summary}
                       </p>
                     )}
-                    <div className="flex items-center gap-3 mt-2 text-xs text-slate-400">
+                    <div className="flex items-center gap-3 mt-2 text-[11px] text-slate-400">
                       <span>{formatDate(t.modifiedAt)}</span>
                       <span className="w-1 h-1 rounded-full bg-slate-300" />
-                      <span>{t.messageCount} message{t.messageCount !== 1 ? "s" : ""}</span>
+                      <span>{t.messageCount} messages</span>
                       <span className="w-1 h-1 rounded-full bg-slate-300" />
                       <span>{t.sizeKb} KB</span>
                     </div>
                   </div>
-
-                  <button
-                    onClick={() => setExpandedId(isExpanded ? null : t.id)}
-                    className="flex-shrink-0 text-slate-400 hover:text-slate-600 p-1 transition-colors"
-                    title="Preview"
-                  >
-                    <svg
-                      className={`w-4 h-4 transition-transform ${isExpanded ? "rotate-180" : ""}`}
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
                 </div>
-
-                {isExpanded && (
-                  <div className="px-4 pb-4 pt-0">
-                    <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600 font-mono leading-relaxed max-h-40 overflow-auto">
-                      {t.preview}
-                    </div>
-                  </div>
-                )}
-              </div>
+              </button>
             );
           })}
         </div>
@@ -188,18 +152,13 @@ export default function SelectChatsStep({
         >
           Back
         </button>
-        <div className="flex items-center gap-4">
-          <span className="text-sm text-slate-400">
-            {selectedIds.length} selected
-          </span>
-          <button
-            onClick={onNext}
-            disabled={selectedIds.length === 0}
-            className="px-6 py-2.5 rounded-lg bg-indigo-600 text-white font-semibold text-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            Generate Documentation
-          </button>
-        </div>
+        <button
+          onClick={onNext}
+          disabled={!selectedId}
+          className="px-6 py-2.5 rounded-lg bg-indigo-600 text-white font-semibold text-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Configure Template
+        </button>
       </div>
     </div>
   );

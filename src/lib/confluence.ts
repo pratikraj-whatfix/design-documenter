@@ -60,6 +60,9 @@ function markdownToConfluenceStorage(markdown: string): string {
   html = html.replace(/^## (.+)$/gm, "<h2>$1</h2>");
   html = html.replace(/^# (.+)$/gm, "<h1>$1</h1>");
 
+  // Blockquotes
+  html = html.replace(/^>\s*(.+)$/gm, "<blockquote><p>$1</p></blockquote>");
+
   // Bold & italic
   html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
   html = html.replace(/\*(.+?)\*/g, "<em>$1</em>");
@@ -77,10 +80,16 @@ function markdownToConfluenceStorage(markdown: string): string {
   html = html.replace(/^- (.+)$/gm, "<li>$1</li>");
   html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, "<ul>$1</ul>");
 
+  // Numbered lists
+  html = html.replace(/^\d+\.\s+(.+)$/gm, "<li>$1</li>");
+
   // Horizontal rules
   html = html.replace(/^---$/gm, "<hr/>");
 
-  // Paragraphs: wrap remaining text blocks
+  // Sub tags (pass through)
+  html = html.replace(/<sub>/g, "<sub>").replace(/<\/sub>/g, "</sub>");
+
+  // Paragraphs
   const lines = html.split("\n");
   const result: string[] = [];
   let inParagraph = false;
@@ -90,8 +99,12 @@ function markdownToConfluenceStorage(markdown: string): string {
     if (
       trimmed.startsWith("<h") ||
       trimmed.startsWith("<ul") ||
+      trimmed.startsWith("<ol") ||
+      trimmed.startsWith("<blockquote") ||
       trimmed.startsWith("<ac:") ||
       trimmed.startsWith("<hr") ||
+      trimmed.startsWith("<sub") ||
+      trimmed.startsWith("</sub") ||
       trimmed === ""
     ) {
       if (inParagraph) {
@@ -112,11 +125,17 @@ function markdownToConfluenceStorage(markdown: string): string {
   return result.join("\n");
 }
 
+function generateTocMacro(): string {
+  return '<ac:structured-macro ac:name="toc"><ac:parameter ac:name="maxLevel">3</ac:parameter></ac:structured-macro>';
+}
+
 export async function publishToPage(
   config: ConfluenceConfig,
   pageId: string,
   markdownContent: string,
-  mode: "append" | "replace" = "append"
+  mode: "append" | "replace" | "insert" = "append",
+  insertAfterId?: string,
+  addToc: boolean = true
 ): Promise<{ ok: boolean; url?: string; error?: string }> {
   try {
     const pageInfo = await getPageInfo(config, pageId);
@@ -124,19 +143,29 @@ export async function publishToPage(
       return { ok: false, error: "Could not find the Confluence page. Check the page URL." };
     }
 
-    const newContent = markdownToConfluenceStorage(markdownContent);
+    let newContent = markdownToConfluenceStorage(markdownContent);
+
+    if (addToc) {
+      newContent = generateTocMacro() + "\n" + newContent;
+    }
 
     let body: string;
-    if (mode === "append") {
+
+    if (mode === "replace") {
+      body = newContent;
+    } else {
       const existingRes = await fetch(
         `${config.baseUrl}/wiki/rest/api/content/${pageId}?expand=body.storage`,
         { headers: { Authorization: authHeader(config.email, config.apiToken) } }
       );
       const existingData = await existingRes.json();
       const existingBody = existingData.body?.storage?.value || "";
-      body = existingBody + "\n<hr/>\n" + newContent;
-    } else {
-      body = newContent;
+
+      if (mode === "insert" && insertAfterId) {
+        body = insertContentAfterSection(existingBody, insertAfterId, newContent);
+      } else {
+        body = existingBody + "\n<hr/>\n" + newContent;
+      }
     }
 
     const res = await fetch(
@@ -174,4 +203,56 @@ export async function publishToPage(
   } catch (e) {
     return { ok: false, error: `Publish failed: ${(e as Error).message}` };
   }
+}
+
+function insertContentAfterSection(
+  existingHtml: string,
+  sectionId: string,
+  newContent: string
+): string {
+  const headingRegex = /<h([1-6])[^>]*>(.*?)<\/h\1>/gi;
+  let match: RegExpExecArray | null;
+  const headings: { index: number; fullMatch: string; endIndex: number }[] = [];
+
+  while ((match = headingRegex.exec(existingHtml)) !== null) {
+    headings.push({
+      index: match.index,
+      fullMatch: match[0],
+      endIndex: match.index + match[0].length,
+    });
+  }
+
+  // Parse the sectionId to find the target index
+  const idxMatch = sectionId.match(/existing-(\d+|pre)/);
+  if (!idxMatch) {
+    return existingHtml + "\n<hr/>\n" + newContent;
+  }
+
+  if (idxMatch[1] === "pre") {
+    if (headings.length > 0) {
+      const insertPos = headings[0].index;
+      return (
+        existingHtml.substring(0, insertPos) +
+        "\n" + newContent + "\n" +
+        existingHtml.substring(insertPos)
+      );
+    }
+    return newContent + "\n" + existingHtml;
+  }
+
+  const sectionIdx = parseInt(idxMatch[1]);
+  if (sectionIdx >= 0 && sectionIdx < headings.length) {
+    const nextSectionStart =
+      sectionIdx + 1 < headings.length
+        ? headings[sectionIdx + 1].index
+        : existingHtml.length;
+
+    return (
+      existingHtml.substring(0, nextSectionStart) +
+      "\n" + newContent + "\n" +
+      existingHtml.substring(nextSectionStart)
+    );
+  }
+
+  return existingHtml + "\n<hr/>\n" + newContent;
 }

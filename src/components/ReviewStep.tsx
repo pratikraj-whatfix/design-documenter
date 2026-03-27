@@ -1,12 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
+import type { TemplateSection } from "@/lib/template";
 
 interface ReviewStepProps {
-  selectedIds: string[];
+  selectedId: string;
+  sections: TemplateSection[];
+  userPrompt: string;
   markdown: string;
   onMarkdownChange: (md: string) => void;
   onNext: () => void;
@@ -14,7 +17,9 @@ interface ReviewStepProps {
 }
 
 export default function ReviewStep({
-  selectedIds,
+  selectedId,
+  sections,
+  userPrompt,
   markdown,
   onMarkdownChange,
   onNext,
@@ -23,38 +28,43 @@ export default function ReviewStep({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [mode, setMode] = useState<"preview" | "edit">("preview");
-  const [generated, setGenerated] = useState(false);
 
-  useEffect(() => {
-    if (markdown || generated) return;
-
+  const generate = useCallback(async () => {
     setLoading(true);
     setError("");
+    try {
+      const enabledSections = sections
+        .filter((s) => s.enabled)
+        .map((s) => ({ id: s.id, title: s.title, placeholders: s.placeholders }));
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transcriptId: selectedId,
+          sections: enabledSections,
+          userPrompt,
+        }),
+      });
+      const data = await res.json();
+      if (data.error) setError(data.error);
+      else onMarkdownChange(data.markdown);
+    } catch {
+      setError("Failed to generate documentation");
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedId, sections, userPrompt, onMarkdownChange]);
 
-    fetch("/api/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ transcriptIds: selectedIds }),
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.error) {
-          setError(data.error);
-        } else {
-          onMarkdownChange(data.markdown);
-          setGenerated(true);
-        }
-      })
-      .catch(() => setError("Failed to generate documentation"))
-      .finally(() => setLoading(false));
-  }, [selectedIds, markdown, generated, onMarkdownChange]);
+  useEffect(() => {
+    if (!markdown) generate();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-3">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600" />
         <p className="text-sm text-slate-500">
-          Analyzing conversations and generating documentation
+          Analyzing the conversation and generating documentation...
         </p>
         <p className="text-xs text-slate-400">This may take a moment for large chats</p>
       </div>
@@ -71,9 +81,17 @@ export default function ReviewStep({
         </div>
         <h3 className="text-lg font-semibold text-slate-800 mb-2">Generation failed</h3>
         <p className="text-slate-500 text-sm mb-6">{error}</p>
-        <button onClick={onBack} className="text-indigo-600 hover:text-indigo-800 text-sm font-medium underline">
-          Go back and try again
-        </button>
+        <div className="flex items-center justify-center gap-4">
+          <button onClick={onBack} className="text-indigo-600 hover:text-indigo-800 text-sm font-medium underline">
+            Go back
+          </button>
+          <button
+            onClick={generate}
+            className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition"
+          >
+            Retry
+          </button>
+        </div>
       </div>
     );
   }
@@ -86,30 +104,38 @@ export default function ReviewStep({
             Review Documentation
           </h2>
           <p className="text-slate-500 text-sm mt-1">
-            Preview and edit your documentation before publishing.
+            Preview, edit, or regenerate before publishing.
           </p>
         </div>
-        <div className="flex bg-slate-100 rounded-lg p-0.5">
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => setMode("preview")}
-            className={`px-3 py-1.5 rounded-md text-xs font-medium transition ${
-              mode === "preview"
-                ? "bg-white text-slate-800 shadow-sm"
-                : "text-slate-500 hover:text-slate-700"
-            }`}
+            onClick={generate}
+            className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-500 hover:text-indigo-600 hover:border-indigo-300 transition"
           >
-            Preview
+            Regenerate
           </button>
-          <button
-            onClick={() => setMode("edit")}
-            className={`px-3 py-1.5 rounded-md text-xs font-medium transition ${
-              mode === "edit"
-                ? "bg-white text-slate-800 shadow-sm"
-                : "text-slate-500 hover:text-slate-700"
-            }`}
-          >
-            Edit
-          </button>
+          <div className="flex bg-slate-100 rounded-lg p-0.5">
+            <button
+              onClick={() => setMode("preview")}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition ${
+                mode === "preview"
+                  ? "bg-white text-slate-800 shadow-sm"
+                  : "text-slate-500 hover:text-slate-700"
+              }`}
+            >
+              Preview
+            </button>
+            <button
+              onClick={() => setMode("edit")}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition ${
+                mode === "edit"
+                  ? "bg-white text-slate-800 shadow-sm"
+                  : "text-slate-500 hover:text-slate-700"
+              }`}
+            >
+              Edit
+            </button>
+          </div>
         </div>
       </div>
 
@@ -134,7 +160,7 @@ export default function ReviewStep({
           <textarea
             value={markdown}
             onChange={(e) => onMarkdownChange(e.target.value)}
-            className="w-full h-[500px] p-6 text-sm font-mono text-slate-700 bg-slate-50 border-none focus:outline-none resize-none"
+            className="w-full h-[600px] p-6 text-sm font-mono text-slate-700 bg-slate-50 border-none focus:outline-none resize-none"
             spellCheck={false}
           />
         )}
@@ -157,7 +183,8 @@ export default function ReviewStep({
           </a>
           <button
             onClick={onNext}
-            className="px-6 py-2.5 rounded-lg bg-indigo-600 text-white font-semibold text-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition"
+            disabled={!markdown}
+            className="px-6 py-2.5 rounded-lg bg-indigo-600 text-white font-semibold text-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Publish to Confluence
           </button>
